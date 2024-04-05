@@ -47,7 +47,7 @@ import bpy
 import io_comfyui
 from io_comfyui.blender_utils import image_to_pil, pil_to_image
 from io_comfyui.comfy_script.runtime.nodes import *
-from io_comfyui.workflow import WorkFlowObject
+from io_comfyui.workflow import WorkFlowObject, run_workflow
 
 
 class WorkFlow(WorkFlowObject):
@@ -73,4 +73,9 @@ class WorkFlow(WorkFlowObject):
 w = WorkFlow()
 io_comfyui.CUSTOM_WORKFLOW_OBJECT = w
 bpy.ops.io_comfyui.run_workflow(use_custom_workflow_obj=True)
+"""or
+w = WorkFlow()
+run_workflow(w)
+w.post_execute(w.results)
+"""
 ```
