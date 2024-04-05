@@ -29,7 +29,7 @@ class IOComfyUIMainPreference(AddonPreferences):
     )
 
     def draw(self, context):
-        self.layout.row(align=True).prop(self, "page", expand=True)
+        self.layout.row(align=True)
         box = self.layout.box()
         row = box.row()
         row.prop(self, "comfyui_server_address")
@@ -48,7 +48,7 @@ def update_workflow_property_group(self, context):
         return
     workflow_name = context.scene.io_comfyui.workflow_name
     if hasattr(bpy.types.Scene, "io_comfyui_workflow_args"):
-        pass
+        remove_workflow_property_group(self, context)
     if not hasattr(bpy.types.Scene, "io_comfyui_workflow_args"):
         annotations = gen_blender_annotations(WORKFLOW_MAP[workflow_name].execute)
         data = {
@@ -166,6 +166,8 @@ class IOComfyUIRunWorkFlow(Operator):
                     if item.keywords.get("subtype", None) == "FILE_PATH":
                         workflow_kwargs[item_key] = bpy.path.abspath(workflow_kwargs[item_key])
             self.working_workflow = (*run_workflow(workflow_object, **workflow_kwargs), workflow_object)
+        else:
+            return {"CANCELLED"}
 
         wm = context.window_manager
         wm.modal_handler_add(self)
