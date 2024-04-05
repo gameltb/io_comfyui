@@ -104,7 +104,11 @@ class NodeOutput:
     
     def wait(self) -> Result | None:
         outer = inspect.currentframe().f_back
-        source = ''.join(inspect.findsource(outer)[0])
+        source = None
+        try:
+            source = ''.join(inspect.findsource(outer)[0])
+        except Exception:
+            pass
         return asyncio.run(self._wait(source))
 
 def _get_outputs_prompt_and_id(outputs: Iterable[NodeOutput]) -> (dict, IdManager):

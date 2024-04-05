@@ -1,7 +1,7 @@
 from typing import Set
 
 import bpy
-from bpy.props import EnumProperty, FloatProperty, PointerProperty, StringProperty
+from bpy.props import EnumProperty, FloatProperty, PointerProperty, StringProperty, BoolProperty
 from bpy.types import AddonPreferences, Context, Event, Operator, Panel, PropertyGroup
 
 from .blender_types import gen_blender_annotations
@@ -109,7 +109,7 @@ class IOComfyUIMainPanel(Panel):
 
         subrow = layout.row()
         subsubrow = subrow.row(align=True)
-        subsubrow.operator("io_comfyui.run_workflow", text="Run Workflow")
+        subsubrow.operator("io_comfyui.run_workflow", text="Run Workflow").use_custom_workflow_obj = False
 
         if scene.io_comfyui.workflow_progress != 0:
             row = layout.row()
@@ -134,38 +134,42 @@ class IOComfyUIInit(Operator):
         return {"FINISHED"}
 
 
+CUSTOM_WORKFLOW_OBJECT = None
+
+
 class IOComfyUIRunWorkFlow(Operator):
     bl_idname = "io_comfyui.run_workflow"
     bl_label = "IO ComfyUI Run Workflow"
 
-    workflow_name: StringProperty()
+    use_custom_workflow_obj: BoolProperty()
 
     @classmethod
     def poll(cls, context):
         return True
 
     def execute(self, context):
-        run_workflow_name = None
-        if hasattr(self, "workflow_name"):
-            workflow_name = str(self.workflow_name).strip()
-            if len(workflow_name) > 0:
-                run_workflow_name = workflow_name
+        workflow_object = None
+        workflow_kwargs = {}
+        if hasattr(self, "use_custom_workflow_obj") and self.use_custom_workflow_obj:
+            if CUSTOM_WORKFLOW_OBJECT is not None:
+                workflow_object = CUSTOM_WORKFLOW_OBJECT
 
-        if run_workflow_name is None:
+        if workflow_object is None:
             workflow_name = str(context.scene.io_comfyui.workflow_name).strip()
             if len(workflow_name) > 0:
                 run_workflow_name = workflow_name
+                workflow_object = WORKFLOW_MAP[run_workflow_name]()
 
-        if run_workflow_name is not None:
-            workflow_object = WORKFLOW_MAP[run_workflow_name]()
-            workflow_kwargs = {}
-            if hasattr(bpy.types.Scene, "io_comfyui_workflow_args"):
-                for item_key in WORKFLOW_ARGS_CLS.__annotations__:
-                    workflow_kwargs[item_key] = getattr(context.scene.io_comfyui_workflow_args, item_key)
-                    item = WORKFLOW_ARGS_CLS.__annotations__[item_key]
-                    if item.keywords.get("subtype", None) == "FILE_PATH":
-                        workflow_kwargs[item_key] = bpy.path.abspath(workflow_kwargs[item_key])
-            self.working_workflow = (*run_workflow(workflow_object, **workflow_kwargs), workflow_object)
+                if hasattr(bpy.types.Scene, "io_comfyui_workflow_args"):
+                    for item_key in WORKFLOW_ARGS_CLS.__annotations__:
+                        workflow_kwargs[item_key] = getattr(context.scene.io_comfyui_workflow_args, item_key)
+                        item = WORKFLOW_ARGS_CLS.__annotations__[item_key]
+                        if item.keywords.get("subtype", None) == "FILE_PATH":
+                            workflow_kwargs[item_key] = bpy.path.abspath(workflow_kwargs[item_key])
+
+        if workflow_object is not None:
+            run_workflow(workflow_object, **workflow_kwargs)
+            self.working_workflow = workflow_object
         else:
             return {"CANCELLED"}
 
@@ -174,13 +178,13 @@ class IOComfyUIRunWorkFlow(Operator):
         return {"RUNNING_MODAL"}
 
     def modal(self, context: Context, event: Event) -> Set[str] | Set[int]:
-        if self.working_workflow[0].task.set_result_flag:
-            self.working_workflow[0].task.wait()
+        if self.working_workflow.workflow.task.set_result_flag:
+            self.working_workflow.workflow.task.wait()
             # task.done not update if no task.wait :(
-            if self.working_workflow[0].task.done():
+            if self.working_workflow.workflow.task.done():
                 context.scene.io_comfyui.workflow_progress = 0
 
-                self.working_workflow[-1].post_execute(self.working_workflow[1])
+                self.working_workflow.post_execute(self.working_workflow.results)
 
                 return {"FINISHED"}
         if event.type in {"ESC"}:

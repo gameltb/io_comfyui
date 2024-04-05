@@ -12,6 +12,10 @@ BASE_DIR = os.path.dirname(__file__)
 class WorkFlowObject:
     """Generic parent."""
 
+    def __init__(self) -> None:
+        self.workflow = None
+        self.results = None
+
     def pre_execute(self, kwargs):
         """Processing parameters"""
         pass
@@ -43,4 +47,6 @@ def run_workflow(workflow: WorkFlowObject, *arg, **kwargs):
     wf = Workflow()
     with wf:
         result = workflow.execute(*arg, **kwargs)
+    workflow.workflow = wf
+    workflow.results = result
     return wf, result
