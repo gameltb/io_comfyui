@@ -681,6 +681,7 @@ class Task:
         self._id = id
         self._new_outputs = {}
         self._fut = asyncio.Future()
+        self.set_result_flag = False
 
     def __str__(self):
         return f'Task {self.number} ({self.prompt_id})'
@@ -702,6 +703,7 @@ class Task:
                     display(result)
         else:
             self.get_loop().call_soon_threadsafe(self._fut.set_result, output)
+            self.set_result_flag = True
             if display_result:
                 from IPython.display import display
 

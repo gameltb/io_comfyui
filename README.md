@@ -1,4 +1,6 @@
 # io_comfyui
 
-Let Blender work with ComfyUI by ComfyScript.
+Let Blender work with ComfyUI by ComfyScript.  
 This addon is still in development.
+
+![](asset/scr.png)

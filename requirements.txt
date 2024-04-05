@@ -8,3 +8,5 @@ nest_asyncio ~= 1.0, >= 1.5.9
 # Runtime
 # Already required by ComfyUI
 Pillow
+
+numpy
