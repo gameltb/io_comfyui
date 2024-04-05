@@ -14,7 +14,7 @@ This addon currently requires ComfyUI to have the following nodes installed:
 
 - [comfyui-tooling-nodes](https://github.com/Acly/comfyui-tooling-nodes)
 
-## BLender
+## Blender
 
 Install like other blender addon.  
 Download [main.zip](https://github.com/gameltb/io_comfyui/archive/refs/heads/main.zip).  
@@ -24,10 +24,10 @@ It requires the installation of dependencies in the [requirements.txt](requireme
 
 ## Basic usage
 
-You need to start comfyui first.
-Than set comfyui server address in addon preferences.
-Find `IO ComfyUI` panel at 3D view, Usually click the N key to toggle Show/Hide.
-Click the `Init ComfyScript` and select Workflow.
+You need to start comfyui first.  
+Than set comfyui server address in addon preferences.  
+Find `IO ComfyUI` panel at 3D view, Usually click the N key to toggle Show/Hide.  
+Click the `Init ComfyScript` and select workflow.
 
 ## Make your own workflow
 
