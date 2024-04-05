@@ -42,6 +42,16 @@ def get_preferences():
 WORKFLOW_ARGS_CLS = None
 
 
+def get_property_group_kwargs(ins, cls):
+    property_group_kwargs = {}
+    for item_key in cls.__annotations__:
+        property_group_kwargs[item_key] = getattr(ins, item_key)
+        item = cls.__annotations__[item_key]
+        if item.keywords.get("subtype", None) == "FILE_PATH":
+            property_group_kwargs[item_key] = bpy.path.abspath(property_group_kwargs[item_key])
+    return property_group_kwargs
+
+
 def update_workflow_property_group(self, context):
     global WORKFLOW_ARGS_CLS
     if context is None:
@@ -49,24 +59,43 @@ def update_workflow_property_group(self, context):
     workflow_name = context.scene.io_comfyui.workflow_name
     if hasattr(bpy.types.Scene, "io_comfyui_workflow_args"):
         remove_workflow_property_group(self, context)
-    if not hasattr(bpy.types.Scene, "io_comfyui_workflow_args"):
-        annotations = gen_blender_annotations(WORKFLOW_MAP[workflow_name].execute)
-        data = {
-            "bl_label": "IO ComfyUI workflow args",
-            "bl_idname": "io_comfyui.workflow_args",
-            "__annotations__": annotations,
-        }
 
-        WORKFLOW_ARGS_CLS = type("IOComfyUISceneWorkflowArgsProperties", (bpy.types.PropertyGroup,), data)
+    annotations = gen_blender_annotations(WORKFLOW_MAP[workflow_name])
+    data = {
+        "bl_label": "IO ComfyUI workflow init args",
+        "bl_idname": "io_comfyui.workflow_init_args",
+        "__annotations__": annotations,
+    }
 
-        bpy.utils.register_class(WORKFLOW_ARGS_CLS)
+    workflow_init_args_cls = type("IOComfyUISceneWorkflowInitArgsProperties", (bpy.types.PropertyGroup,), data)
 
-        bpy.types.Scene.io_comfyui_workflow_args = bpy.props.PointerProperty(type=WORKFLOW_ARGS_CLS)
+    annotations = gen_blender_annotations(WORKFLOW_MAP[workflow_name].execute)
+    data = {
+        "bl_label": "IO ComfyUI workflow execute args",
+        "bl_idname": "io_comfyui.workflow_execute_args",
+        "__annotations__": annotations,
+    }
+
+    workflow_execute_args_cls = type("IOComfyUISceneWorkflowExecuteArgsProperties", (bpy.types.PropertyGroup,), data)
+
+    class IOComfyUISceneWorkflowArgsProperties(bpy.types.PropertyGroup):
+        bl_label = "IO ComfyUI workflow args"
+        bl_idname = "io_comfyui.workflow_args"
+
+        workflow_init_args: PointerProperty(type=workflow_init_args_cls)
+        workflow_execute_args: PointerProperty(type=workflow_execute_args_cls)
+
+    WORKFLOW_ARGS_CLS = (IOComfyUISceneWorkflowArgsProperties, workflow_init_args_cls, workflow_execute_args_cls)
+    for cls in reversed(WORKFLOW_ARGS_CLS):
+        bpy.utils.register_class(cls)
+
+    bpy.types.Scene.io_comfyui_workflow_args = bpy.props.PointerProperty(type=IOComfyUISceneWorkflowArgsProperties)
 
 
 def remove_workflow_property_group(self, context):
     if WORKFLOW_ARGS_CLS is not None:
-        bpy.utils.unregister_class(WORKFLOW_ARGS_CLS)
+        for cls in WORKFLOW_ARGS_CLS:
+            bpy.utils.unregister_class(cls)
     if hasattr(bpy.types.Scene, "io_comfyui_workflow_args"):
         del bpy.types.Scene.io_comfyui_workflow_args
 
@@ -103,9 +132,12 @@ class IOComfyUIMainPanel(Panel):
 
         if hasattr(bpy.types.Scene, "io_comfyui_workflow_args"):
             box = layout.box()
-            for item_key in WORKFLOW_ARGS_CLS.__annotations__:
+            for item_key in WORKFLOW_ARGS_CLS[1].__annotations__:
                 row = box.row()
-                row.prop(scene.io_comfyui_workflow_args, item_key)
+                row.prop(scene.io_comfyui_workflow_args.workflow_init_args, item_key)
+            for item_key in WORKFLOW_ARGS_CLS[2].__annotations__:
+                row = box.row()
+                row.prop(scene.io_comfyui_workflow_args.workflow_execute_args, item_key)
 
         subrow = layout.row()
         subsubrow = subrow.row(align=True)
@@ -158,14 +190,18 @@ class IOComfyUIRunWorkFlow(Operator):
             workflow_name = str(context.scene.io_comfyui.workflow_name).strip()
             if len(workflow_name) > 0:
                 run_workflow_name = workflow_name
-                workflow_object = WORKFLOW_MAP[run_workflow_name]()
+                workflow_init_kwargs = {}
+                if hasattr(bpy.types.Scene, "io_comfyui_workflow_args"):
+                    workflow_init_kwargs = get_property_group_kwargs(
+                        context.scene.io_comfyui_workflow_args.workflow_init_args, WORKFLOW_ARGS_CLS[1]
+                    )
+
+                workflow_object = WORKFLOW_MAP[run_workflow_name](**workflow_init_kwargs)
 
                 if hasattr(bpy.types.Scene, "io_comfyui_workflow_args"):
-                    for item_key in WORKFLOW_ARGS_CLS.__annotations__:
-                        workflow_kwargs[item_key] = getattr(context.scene.io_comfyui_workflow_args, item_key)
-                        item = WORKFLOW_ARGS_CLS.__annotations__[item_key]
-                        if item.keywords.get("subtype", None) == "FILE_PATH":
-                            workflow_kwargs[item_key] = bpy.path.abspath(workflow_kwargs[item_key])
+                    workflow_kwargs = get_property_group_kwargs(
+                        context.scene.io_comfyui_workflow_args.workflow_execute_args, WORKFLOW_ARGS_CLS[2]
+                    )
 
         if workflow_object is not None:
             run_workflow(workflow_object, **workflow_kwargs)

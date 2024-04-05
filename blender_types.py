@@ -1,15 +1,30 @@
 import inspect
+from typing import Annotated
 
-from bpy.props import BoolProperty, EnumProperty, FloatProperty, IntProperty, StringProperty
+import bpy
+from bpy.props import BoolProperty, EnumProperty, FloatProperty, IntProperty, PointerProperty, StringProperty
 
 from .workflow_types import (
     BoolWidget,
     ComboWidget,
+    ComfyWidgetType,
     FloatWidget,
     IntWidget,
     StringWidget,
     find_comfy_widget_type_annotation,
 )
+
+
+class BlenderObjectWidget(ComfyWidgetType):
+    TYPE = "BLENDER_OBJECT"
+
+    @property
+    def blender_annotation(self):
+        return PointerProperty(type=bpy.types.Object)
+
+
+BlenderObjectType = Annotated[bpy.types.Object, BlenderObjectWidget()]
+
 
 TYPE_MAP = {
     int: IntWidget(),
