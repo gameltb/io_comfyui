@@ -18,7 +18,7 @@ class WorkFlowObject:
 
     def pre_execute(self, kwargs):
         """Processing parameters"""
-        pass
+        return kwargs
 
     def execute(self, **kwargs):
         """WorkFlow."""

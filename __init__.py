@@ -204,6 +204,7 @@ class IOComfyUIRunWorkFlow(Operator):
                     )
 
         if workflow_object is not None:
+            workflow_kwargs = workflow_object.pre_execute(workflow_kwargs)
             run_workflow(workflow_object, **workflow_kwargs)
             self.working_workflow = workflow_object
         else:

@@ -36,6 +36,10 @@ example
 
 - [controlnet](custom_workflows/controlnet.py)
 - [simple_t2i](custom_workflows/simple_t2i.py)
+- [hybrikx](custom_workflows/hybrikx.py)
+
+[hybrikx](custom_workflows/hybrikx.py) need [ComfyUI_paper_playground](https://github.com/gameltb/ComfyUI_paper_playground).  
+Usage : set arm to `SMPLX-neutral` in `smplx_model_300_20220615.blend` which can be found in [smplx_blender](https://smpl-x.is.tue.mpg.de/index.html) smplx_blender_addon_300_20220623.zip.
 
 New workflow can be save to custom_workflows/ like example.
 
