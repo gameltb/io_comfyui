@@ -1,6 +1,6 @@
 # io_comfyui
 
-Let Blender work with ComfyUI by ComfyScript.  
+Let Blender work with ComfyUI by [ComfyScript](https://github.com/Chaoses-Ib/ComfyScript).  
 This addon is still in development.
 
 ![](asset/scr.png)
@@ -79,3 +79,8 @@ run_workflow(w)
 w.post_execute(w.results)
 """
 ```
+
+# Resources
+
+- [Character bones that look like Openpose for blender](https://toyxyz.gumroad.com/l/ciojz)
+- [smplx_blender](https://smpl-x.is.tue.mpg.de/index.html)
