@@ -10,6 +10,7 @@ class WorkFlow(WorkFlowObject):
     def execute(
         self,
         checkpoint: Annotated[str, ComboWidget(choices=[e.value for e in CheckpointLoaderSimple.ckpt_name])],
+        vae: Annotated[str, ComboWidget(choices=[e.value for e in VAELoader.vae_name])],
         positive: str = "1girl",
         negative: str = "text, watermark",
         width: int = 512,
@@ -26,7 +27,7 @@ class WorkFlow(WorkFlowObject):
         conditioning2 = CLIPTextEncode(negative, clip)
         latent = EmptyLatentImage(width, height, batch_size)
         latent = KSampler(model, seed, steps, cfg, sampler_name, scheduler, conditioning, conditioning2, latent, 1)
-        vae = VAELoader("vae-ft-mse-840000-ema-pruned.safetensors")
+        vae = VAELoader(vae)
         image = VAEDecode(latent, vae)
         PreviewImage(image)
         return (PreviewImage(image),)

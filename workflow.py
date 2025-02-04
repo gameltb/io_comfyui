@@ -40,6 +40,8 @@ def init_comfy_script(comfyui: str = None):
             base_name, ext = os.path.splitext(file_name)
             if ext == ".py":
                 module = importlib.import_module(f".custom_workflows.{base_name}", package=__package__)
+                if base_name in WORKFLOW_MAP:
+                    importlib.reload(module)
                 WORKFLOW_MAP[base_name] = module.WorkFlow
         except Exception:
             traceback.print_exc()
