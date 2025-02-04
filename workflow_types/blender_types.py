@@ -4,18 +4,20 @@ from typing import Annotated
 import bpy
 from bpy.props import BoolProperty, EnumProperty, FloatProperty, IntProperty, PointerProperty, StringProperty
 
-from .workflow_types import (
+from ..io_utils.image import ImageData
+from .common import (
     BoolWidget,
     ComboWidget,
-    ComfyWidgetType,
+    ComfyWidget,
     FloatWidget,
     IntWidget,
     StringWidget,
     find_comfy_widget_type_annotation,
+    make_widget,
 )
 
 
-class BlenderObjectWidget(ComfyWidgetType):
+class BlenderObjectWidget(ComfyWidget):
     TYPE = "BLENDER_OBJECT"
 
     @property
@@ -24,6 +26,8 @@ class BlenderObjectWidget(ComfyWidgetType):
 
 
 BlenderObjectType = Annotated[bpy.types.Object, BlenderObjectWidget()]
+
+ImageType = Annotated[ImageData, make_widget("IMAGE")]
 
 
 TYPE_MAP = {

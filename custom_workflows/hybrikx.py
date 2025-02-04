@@ -4,11 +4,10 @@ import os
 import bpy
 import numpy as np
 
-from ..blender_types import BlenderObjectType
 from ..comfy_script.runtime.nodes import *
 from ..io_utils.image import ImageDataETNLoadImageBase64
 from ..workflow import WorkFlowObject
-from ..workflow_types import ImageType
+from ..workflow_types import BlenderObjectType, ImageType
 
 
 def rot2quat(rot):

@@ -4,8 +4,8 @@ import bpy
 from bpy.props import BoolProperty, EnumProperty, FloatProperty, PointerProperty, StringProperty
 from bpy.types import AddonPreferences, Context, Event, Operator, Panel, PropertyGroup
 
-from .blender_types import gen_blender_annotations
 from .workflow import WORKFLOW_MAP, WorkFlowObject, init_comfy_script, run_workflow, wait_for_workflow
+from .workflow_types import gen_blender_annotations
 
 bl_info = {
     "name": "IO ComfyUI",
