@@ -81,6 +81,8 @@ class RuntimeFactory:
         
         - `import_fullname_types`: WIP.
         '''
+        self.nodes: dict[str, Any] = {}
+
         self._vars = { id: None for k, dic in self.GLOBAL_ENUMS.items() for id in dic.values() }
         self._data_type_stubs = {}
         self._enum_values = {}
@@ -216,7 +218,8 @@ class RuntimeFactory:
             id = astutil.str_to_raw_id(name)
 
             c = None
-            if isinstance(type_info, list):
+            # Standalone runtime: Some nodes may use tuple for enum values, possibly for bypassing validation
+            if isinstance(type_info, list) or isinstance(type_info, tuple):
                 # Output types can also be lists (#9):
                 '''
                 {
@@ -337,12 +340,17 @@ class RuntimeFactory:
             if c is None:
                 c = t.__name__
 
+            if isinstance(t, type(astutil.StrEnum)):
+                c += ' | str'
+
             if optional:
                 assert not output
                 # c = f'Optional[{c}]'
                 c = f'{c} | None'
                 if default is None:
-                    input_defaults[id] = None
+                    # Optional inputs should not be set if not provided
+                    # e.g. FooocusLoader (#59)
+                    # input_defaults[id] = None
 
                     c += ' = None'
             
@@ -514,6 +522,8 @@ def {class_id}(
         for enum_id, enum in enums.items():
             setattr(node, enum_id, enum)
         self._set_type(info['name'], class_id, node)
+
+        self.nodes[info['name']] = node
     
     def vars(self) -> dict:
         return self._vars
@@ -531,6 +541,29 @@ from enum import Enum as StrEnum, IntEnum, Enum as FloatEnum
         c += '\n'.join(self._enum_type_stubs.values()) + '\n\n'
         c += '\n'.join(self._node_type_stubs)
         return c
+
+    @staticmethod
+    def _map_input(k: str, v: Any, node_info: dict) -> Any:
+        '''
+        Do some conversions for inputs before calling the nodes, e.g. converting `bool` to corresponding `str`.
+
+        ### Bool enum conversions
+        The motivation to do such conversions is to unify the chaos situation of bool enums. There are many possible bool enums used by different custom nodes: e.g. `'enable'/'disable', 'on'/'off', 'true'/'false', 'yes'/'no', True/False` and their upper case variants. I think the cognitive cost is smaller to use `True`/`False` for them all.
+        '''
+        if v is True or v is False:
+            input_type = None
+            for group in 'required', 'optional':
+                group: dict = node_info['input'].get(group)
+                if group is not None and k in group:
+                    input_type = group[k][0]
+                    break
+            # input_type is None if the input is extra
+            # e.g. ComfyUI-VideoHelperSuite (#22)
+            if input_type is not None and is_bool_enum(input_type):
+                # print(f'ComfyScript: _map_input: {k}: {v} -> {repr(to_bool_enum(input_type, v))}')
+                return to_bool_enum(input_type, v)
+        # TODO: Path
+        return v
 
 __all__ = [
     'RuntimeFactory',

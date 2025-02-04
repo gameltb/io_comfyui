@@ -22,5 +22,5 @@ class ImageDataETNLoadImageBase64(ImageData):
 
     def comfy_script_load(self) -> tuple["Image", "Mask"]:
         from ..comfy_script.runtime.nodes import ETNLoadImageBase64
-        
+
         return ETNLoadImageBase64(base64.standard_b64encode(self.image_data).decode())

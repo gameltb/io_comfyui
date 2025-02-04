@@ -1,24 +1,62 @@
+from __future__ import annotations
+from dataclasses import dataclass
+from enum import IntEnum
+from io import BytesIO
 import json
 import os
 from pathlib import PurePath
+import struct
 import sys
 import traceback
+from typing import Callable
 
 import asyncio
+from warnings import warn
+from PIL import Image
 import nest_asyncio
 import aiohttp
+from yarl import URL
 
 nest_asyncio.apply()
 
-endpoint = 'http://127.0.0.1:8188/'
+class Client:
+    def __init__(
+        self,
+        base_url: str | URL = 'http://127.0.0.1:8188/',
+        *,
+        session_factory: Callable[[], aiohttp.ClientSession] = aiohttp.ClientSession
+    ):
+        '''
+        - `base_url`: The base URL of the ComfyUI server API.
 
-def set_endpoint(api_endpoint: str):
-    global endpoint
-    if not api_endpoint.startswith('http://'):
-        api_endpoint = 'http://' + api_endpoint
-    if not api_endpoint.endswith('/'):
-        api_endpoint += '/'
-    endpoint = api_endpoint
+          e.g. `'http://127.0.0.1:8188/'`
+
+        - `session_factory`: A callable factory that returns a new [`aiohttp.ClientSession`](https://docs.aiohttp.org/en/latest/client_reference.html#aiohttp.ClientSession) object. 
+
+          e.g. `lambda: aiohttp.ClientSession(auth=aiohttp.BasicAuth('Aladdin', 'open sesame'))`
+        '''
+        self.base_url = self._normalize_base_url(base_url)
+
+        # Do not pass base_url to ClientSession, as it only supports absolute URLs without path part
+        self._session_factory = session_factory
+        
+    def _normalize_base_url(self, base_url: str | URL):
+        if base_url is None:
+            base_url = 'http://127.0.0.1:8188/'
+        if not isinstance(base_url, str):
+            base_url = str(base_url)
+        if not base_url.startswith(('http://', 'https://')):
+            base_url = 'http://' + base_url
+        if not base_url.endswith('/'):
+            base_url += '/'
+        return base_url
+    
+    def session(self) -> aiohttp.ClientSession:
+        '''Because `aiohttp.ClientSession` is not event-loop-safe (thread-safe), a new session should be created for each request to avoid potential issues. Also, `aiohttp.ClientSession` cannot be closed in a sync manner.'''
+        return self._session_factory()
+
+client: Client = Client()
+'''The global client object.'''
 
 async def response_to_str(response: aiohttp.ClientResponse) -> str:
     try:
@@ -28,6 +66,10 @@ async def response_to_str(response: aiohttp.ClientResponse) -> str:
     return f'{response}{msg}'
 
 async def _get_nodes_info() -> dict:
+    '''
+    When used with standalone runtime:
+    - The result may contain tuples intead of lists.
+    '''
     # Don't use `import nodes` with `except ImportError`, `nodes` may be in `sys.path` but not loaded (#15)
     nodes = sys.modules.get('nodes')
     if nodes is not None and 'NODE_CLASS_MAPPINGS' in vars(nodes) and 'NODE_DISPLAY_NAME_MAPPINGS' in vars(nodes):
@@ -64,15 +106,19 @@ async def _get_nodes_info() -> dict:
                 traceback.print_exc()
         return out
 
-    async with aiohttp.ClientSession() as session:
-    # http://127.0.0.1:8188/object_info
-        async with session.get(f'{endpoint}object_info') as response:
+    async with client.session() as session:
+        # http://127.0.0.1:8188/object_info
+        async with session.get(f'{client.base_url}object_info') as response:
             if response.status == 200:
                 return await response.json()
             else:
                 raise Exception(f'ComfyScript: Failed to get nodes info: {await response_to_str(response)}')
 
 def get_nodes_info() -> dict:
+    '''
+    When used with standalone runtime:
+    - The result may contain tuples intead of lists.
+    '''
     return asyncio.run(_get_nodes_info())
 
 async def _get_embeddings() -> list[str]:
@@ -81,9 +127,9 @@ async def _get_embeddings() -> list[str]:
         embeddings = folder_paths.get_filename_list("embeddings")
         return list(map(lambda a: os.path.splitext(a)[0], embeddings))
     
-    async with aiohttp.ClientSession() as session:
-    # http://127.0.0.1:8188/embeddings
-        async with session.get(f'{endpoint}embeddings') as response:
+    async with client.session() as session:
+        # http://127.0.0.1:8188/embeddings
+        async with session.get(f'{client.base_url}embeddings') as response:
             if response.status == 200:
                 return await response.json()
             else:
@@ -98,9 +144,61 @@ class WorkflowJSONEncoder(json.JSONEncoder):
             return str(o)
         return super().default(o)
 
+class BinaryEventTypes(IntEnum):
+    # See ComfyUI::server.BinaryEventTypes
+    PREVIEW_IMAGE = 1
+    UNENCODED_PREVIEW_IMAGE = 2
+    '''Only used internally in ComfyUI.'''
+
+@dataclass
+class BinaryEvent:
+    type: BinaryEventTypes | int
+    data: bytes
+
+    @staticmethod
+    def from_bytes(data: bytes) -> BinaryEvent:
+        # See ComfyUI::server.encode_bytes()
+        type_int = struct.unpack('>I', data[:4])[0]
+        try:
+            type = BinaryEventTypes(type_int)
+        except ValueError:
+            warn(f'Unknown binary event type: {data[:4]}')
+            type = type_int
+        data = data[4:]
+        return BinaryEvent(type, data)
+    
+    def to_object(self) -> Image.Image | bytes:
+        if self.type == BinaryEventTypes.PREVIEW_IMAGE:
+            return _PreviewImage.from_bytes(self.data).image
+        return self
+
+class _PreviewImageFormat(IntEnum):
+    '''`format.name` is compatible with PIL.'''
+    JPEG = 1
+    PNG = 2
+
+@dataclass
+class _PreviewImage:
+    format: _PreviewImageFormat
+    image: Image.Image
+
+    @staticmethod
+    def from_bytes(data: bytes) -> _PreviewImage:
+        # See ComfyUI::LatentPreviewer
+        format_int = struct.unpack('>I', data[:4])[0]
+        format = None
+        try:
+            format = _PreviewImageFormat(format_int).name
+        except ValueError:
+            warn(f'Unknown image format: {data[:4]}')
+
+        image = Image.open(BytesIO(data[4:]), formats=(format,) if format is not None else None)
+
+        return _PreviewImage(format, image)
+
 __all__ = [
-    'endpoint'
-    'set_endpoint',
+    'client',
+    'Client',
     '_get_nodes_info',
     'get_nodes_info',
     '_get_embeddings',

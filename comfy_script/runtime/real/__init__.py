@@ -2,6 +2,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable, MutableMapping
 
 def load(comfyui: Path | str = None, args: ComfyUIArgs | None = None, vars: dict | None = None, naked: bool = False, config: RealModeConfig | None = None, no_server: bool = True):
     '''
@@ -24,7 +25,16 @@ def load(comfyui: Path | str = None, args: ComfyUIArgs | None = None, vars: dict
     # import server
     # server.PromptServer.instance.last_prompt_id = 'https://github.com/Chaoses-Ib/ComfyScript'
     import comfy.utils
-    comfy.utils.set_progress_bar_global_hook(None)
+    if hasattr(comfy.utils, 'set_progress_bar_global_hook'):
+        comfy.utils.set_progress_bar_global_hook(None)
+    else:
+        # set_progress_bar_global_hook is removed in new versions of comfyui package
+        import comfy.execution_context
+        try:
+            comfy.execution_context.current_execution_context().server.receive_all_progress_notifications = False
+        except Exception:
+            # receive_all_progress_notifications is readonly in new versions, give up
+            pass
 
     # Import nodes
     nodes_info = client.get_nodes_info()
@@ -34,15 +44,42 @@ def load(comfyui: Path | str = None, args: ComfyUIArgs | None = None, vars: dict
         config = RealModeConfig.naked()
     elif config is None:
         config = RealModeConfig()
-    asyncio.run(nodes.load(nodes_info, vars, config))
+    node.nodes.clear()
+    asyncio.run(nodes.load(nodes_info, vars, config, nodes=node.nodes))
 
 class Workflow:
-    def __init__(self):
+    # TODO: Thread-safe
+    _instance: Workflow = None
+
+    def __init__(
+        self,
+        *,
+        cache: MutableMapping | Callable[[str], MutableMapping] | None = None
+    ):
+        '''
+        - `cache`: Use `dict` (`{}`) for simple unbounded cache. For advanced cache, [cachetools](https://github.com/tkem/cachetools) or other libraries can be used.
+
+          To use different cache for different types of nodes, pass a callable that accepts the node name and returns a cache. For example:
+          ```
+          cache=lambda node: {}
+          ```
+          or:
+          ```
+          node_cache = {}
+          cache=lambda node: node_cache.setdefault(node, {})
+          ```
+
+          Note that for node output, any changes made by user code instead of nodes will be ignored.
+        '''
         import torch
 
         self.inference_mode = torch.inference_mode()
+        self._cache = cache
+        self._node_cache = {}
 
     def __enter__(self) -> Workflow:
+        Workflow._instance = self
+
         import comfy.model_management
 
         self.inference_mode.__enter__()
@@ -55,6 +92,20 @@ class Workflow:
         # TODO: DISABLE_SMART_MEMORY
 
         self.inference_mode.__exit__(exc_type, exc_value, traceback)
+
+        Workflow._instance = None
+    
+    def _get_cache(self, node: str) -> MutableMapping | None:
+        if self._cache is None:
+            return None
+        elif isinstance(self._cache, MutableMapping):
+            return self._cache
+        else:
+            cache = self._node_cache.get(node, None)
+            if cache is None:
+                cache = self._cache(node)
+                self._node_cache[node] = cache
+            return cache
 
 @dataclass
 class RealModeConfig:
@@ -81,7 +132,16 @@ class RealModeConfig:
     args_to_kwds: bool = True
     '''Map positional arguments to keyword arguments.
 
-    Virtual mode and the generated type stubs for nodes determine the position of arguments by `INPUT_TYPES`, but it may differ from what the position `FUNCTION` actually has. To make the code in virtual mode compatible with  real mode, and reuse the type stubs, `args_to_kwds` is used to map all positional arguments to keyword arguments. If `args_to_kwds` is not used, keyword arguments should always be used.
+    Virtual mode and the generated type stubs for nodes determine the position of arguments by `INPUT_TYPES`, but it may differ from what the position `FUNCTION` actually has. To make the code in virtual mode compatible with real mode, and reuse the type stubs, `args_to_kwds` is used to map all positional arguments to keyword arguments. If `args_to_kwds` is not used, keyword arguments should always be used.
+    '''
+
+    map_inputs: bool = True
+    '''
+    Do some conversions for inputs before calling the nodes, e.g. converting `bool` to corresponding `str`.
+
+    See details at `comfy_script.runtime.factory.RuntimeFactory._map_input`.
+
+    Require `args_to_kwds` at the moment.
     '''
 
     use_config_defaults: bool = True
@@ -119,15 +179,19 @@ class RealModeConfig:
     @staticmethod
     def naked() -> RealModeConfig:
         '''Equivalent to disbling all options.'''
-        return RealModeConfig(False, False, False, False, False, False, False)
+        return RealModeConfig(False, False, False, False, False, False, False, False)
 
 from ... import client
 from .. import ComfyUIArgs, start_comfyui
+from . import node
 from . import nodes
+from . import util
 
 __all__ = [
     'load',
     'ComfyUIArgs',
     'RealModeConfig',
-    'Workflow'
+    'Workflow',
+    'node',
+    'util'
 ]

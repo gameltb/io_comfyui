@@ -1,11 +1,11 @@
 from typing import Set
 
 import bpy
-from bpy.props import EnumProperty, FloatProperty, PointerProperty, StringProperty, BoolProperty
+from bpy.props import BoolProperty, EnumProperty, FloatProperty, PointerProperty, StringProperty
 from bpy.types import AddonPreferences, Context, Event, Operator, Panel, PropertyGroup
 
 from .blender_types import gen_blender_annotations
-from .workflow import WORKFLOW_MAP, init_comfy_script, run_workflow
+from .workflow import WORKFLOW_MAP, WorkFlowObject, init_comfy_script, run_workflow, wait_for_workflow
 
 bl_info = {
     "name": "IO ComfyUI",
@@ -180,7 +180,7 @@ class IOComfyUIRunWorkFlow(Operator):
         return True
 
     def execute(self, context):
-        workflow_object = None
+        workflow_object: WorkFlowObject = None
         workflow_kwargs = {}
         if hasattr(self, "use_custom_workflow_obj") and self.use_custom_workflow_obj:
             if CUSTOM_WORKFLOW_OBJECT is not None:
@@ -215,15 +215,13 @@ class IOComfyUIRunWorkFlow(Operator):
         return {"RUNNING_MODAL"}
 
     def modal(self, context: Context, event: Event) -> Set[str] | Set[int]:
-        if self.working_workflow.workflow.task.set_result_flag:
-            self.working_workflow.workflow.task.wait()
-            # task.done not update if no task.wait :(
-            if self.working_workflow.workflow.task.done():
-                context.scene.io_comfyui.workflow_progress = 0
+        wait_for_workflow(self.working_workflow)
+        if self.working_workflow.workflow.task.done():
+            context.scene.io_comfyui.workflow_progress = 0
 
-                self.working_workflow.post_execute(self.working_workflow.results)
+            self.working_workflow.post_execute(self.working_workflow.results)
 
-                return {"FINISHED"}
+            return {"FINISHED"}
         if event.type in {"ESC"}:
             # TODO: Cancel
             # return {"CANCELLED"}

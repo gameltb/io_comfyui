@@ -1,14 +1,17 @@
+# Do not import classes here. They may be overridden by custom nodes.
 from __future__ import annotations
-from pathlib import Path
+import inspect
+import pathlib
 import traceback
-from typing import Any, Iterable
+import typing
+from warnings import warn
 import wrapt
 
-from . import RealModeConfig
+from .. import real
 from .. import factory
 from ..nodes import _positional_args_to_keyword, Node as VirtualNode
 
-async def load(nodes_info: dict, vars: dict | None, config: RealModeConfig) -> None:
+async def load(nodes_info: dict, vars: dict | None, config: real.RealModeConfig, *, nodes: dict[str, typing.Any] | None = None) -> None:
     fact = RealRuntimeFactory(config)
     await fact.init()
 
@@ -19,6 +22,9 @@ async def load(nodes_info: dict, vars: dict | None, config: RealModeConfig) -> N
             print(f'ComfyScript: Failed to load node {node_info["name"]}')
             traceback.print_exc()
     
+    if nodes is not None:
+        nodes.update(fact.nodes)
+
     globals().update(fact.vars())
     __all__.extend(fact.vars().keys())
 
@@ -29,8 +35,14 @@ async def load(nodes_info: dict, vars: dict | None, config: RealModeConfig) -> N
         vars.update(fact.vars())
 
     # nodes.pyi
-    with open(Path(__file__).resolve().with_suffix('.pyi'), 'w', encoding='utf8') as f:
-        f.write(fact.type_stubs())
+    with open(pathlib.Path(__file__).resolve().with_suffix('.pyi'), 'w', encoding='utf8') as f:
+        stubs = fact.type_stubs()
+        try:
+            f.write(stubs)
+        except UnicodeEncodeError:
+            # Replace invalid chars in type stubs with '�'
+            # e.g. #87
+            f.write(stubs.encode('utf8', 'surrogateescape').decode('utf8', 'replace'))
 
 class RealNodeOutputWrapper(wrapt.ObjectProxy):
     def __repr__(self):
@@ -40,7 +52,7 @@ class RealNodeOutputWrapper(wrapt.ObjectProxy):
         return type(self.__wrapped__)
 
 class RealRuntimeFactory(factory.RuntimeFactory):
-    def __init__(self, config: RealModeConfig):
+    def __init__(self, config: real.RealModeConfig):
         super().__init__(hidden_inputs=True)
         self._config = config
 
@@ -75,16 +87,22 @@ class RealRuntimeFactory(factory.RuntimeFactory):
 
             def new(cls, *args, _comfy_script_v=(orginal_new, info, defaults, config, virtual_node), **kwds):
                 orginal_new, info, defaults, config, virtual_node = _comfy_script_v
-                config: RealModeConfig
+                config: real.RealModeConfig
 
                 obj = orginal_new(cls)
                 obj.__init__()
+
+                # # Map args and kwds
+                # args = tuple(map(self._map_arg, args))
+                # kwds = { k: self._map_arg(v) for k, v in kwds.items() }
 
                 # TODO: LazyCell
                 if config.args_to_kwds:
                     # kwds should take precedence over args
                     kwds = _positional_args_to_keyword(info, args) | kwds
                     args = ()
+                    if config.map_inputs:
+                        kwds = { k: RealRuntimeFactory._map_input(k, v, info) for k, v in kwds.items() }
                 
                 kwds_without_defaults = kwds
                 if config.use_config_defaults:
@@ -94,8 +112,7 @@ class RealRuntimeFactory(factory.RuntimeFactory):
                         pos_kwds = _positional_args_to_keyword(info, args)
                         kwds = { k: v for k, v in defaults.items() if k not in pos_kwds } | kwds
                 
-                # TODO: Bool enum, path
-                
+                has_hidden_prompt_input = False
                 if config.track_workflow:
                     virtual_kwds = {}
                     for k, v in kwds.items():
@@ -124,18 +141,65 @@ class RealRuntimeFactory(factory.RuntimeFactory):
                                         prompt, id = virtual_outputs[0]._get_prompt_and_id()
                                         unique_id = id.get_id(virtual_outputs[0].node_prompt)
                                     kwds[k] = prompt
+                                    has_hidden_prompt_input = True
                                 elif v == 'UNIQUE_ID':
                                     if prompt is None:
                                         prompt, id = virtual_outputs[0]._get_prompt_and_id()
                                         unique_id = id.get_id(virtual_outputs[0].node_prompt)
                                     kwds[k] = unique_id
                                 # TODO: EXTRA_PNGINFO: ComfyScriptSource
+                
+                # Lookup cache
+                cache = None
+                wf = real.Workflow._instance
+                if wf is not None:
+                    cache = wf._get_cache(info['name'])
+                    if cache is not None:
+                        if not config.track_workflow:
+                            warn('Workflow cache requires `track_workflow` to work')
+                            cache = None
+                        else:
+                            # TODO: Or FrozenDict?
+                            prompt = virtual_outputs[0].api_format_json()
+                            outputs = cache.get(prompt, None)
+                            if outputs is not None:
+                                return outputs
+
+                # Filter out invalid kwds
+                # TODO: LazyCell
+                valid_kwds = self._get_valid_kwds(getattr(obj, obj.FUNCTION))
+                if valid_kwds is not None:
+                    filtered_kwds = { k: v for k, v in kwds.items() if k in valid_kwds }
+                    if len(filtered_kwds) != len(kwds) and not has_hidden_prompt_input:
+                        invalid_kwds = { k: v for k, v in kwds.items() if k not in valid_kwds }
+                        print(f'ComfyScript: {info["name"]}: Invalid kwds: {invalid_kwds}')
+                    else:
+                        # kwds only valid for prompt
+                        # e.g. FooocusLoader (#85)
+                        pass
+                    kwds = filtered_kwds
 
                 # Call the node
                 outputs = getattr(obj, obj.FUNCTION)(*args, **kwds)
 
+                # Unpack result if this is not an output node
+                # e.g. FooocusLoader (#85)
+                # TODO: Unpack output nodes too?
+                #       The result of output nodes can still be linked to other nodes.
+                if isinstance(outputs, dict) and info.get('output_node') is not True:
+                    # Print if not empty
+                    # TODO: Add API
+                    ui = outputs.get('ui')
+                    if ui:
+                        print(f"ComfyScript: {info['name']}: ui output: {ui}")
+                    expand = outputs.get('expand')
+                    if expand:
+                        print(f"ComfyScript: {info['name']}: expand output: {expand}")
+
+                    outputs = outputs['result']
+
                 if config.track_workflow and virtual_outputs is not None:
-                    if isinstance(outputs, Iterable) and not isinstance(outputs, dict):
+                    if isinstance(outputs, typing.Iterable) and not isinstance(outputs, dict):
                         if len(outputs) != len(virtual_outputs):
                             print(f'ComfyScript: track_workflow: {info["name"]} has different number of real and virtual outputs: {len(outputs)} != {len(virtual_outputs)}')
                         wrapped_outputs = []
@@ -146,8 +210,12 @@ class RealRuntimeFactory(factory.RuntimeFactory):
                         outputs = wrapped_outputs
 
                 # See ComfyUI's `get_output_data()`
-                if config.unpack_single_output and isinstance(outputs, Iterable) and not isinstance(outputs, dict) and len(outputs) == 1:
-                    return outputs[0]
+                if config.unpack_single_output and isinstance(outputs, typing.Iterable) and not isinstance(outputs, dict) and len(outputs) == 1:
+                    outputs = outputs[0]
+                
+                # Cache outputs
+                if cache is not None:
+                    cache[prompt] = outputs
                 
                 return outputs
             
@@ -163,5 +231,29 @@ class RealRuntimeFactory(factory.RuntimeFactory):
                 })
         
         return cls
+
+    # @staticmethod
+    # def _map_arg(arg: typing.Any) -> typing.Any:
+    #     return arg
+
+    @staticmethod
+    def _get_valid_kwds(f):
+        # new_args, new_varargs, new_varkwds, new_defaults = inspect.getargspec(f)
+        # if new_varkwds is not None:
+        #     valid_kwds = None
+        # else:
+        #     valid_kwds = set(new_args)
+
+        valid_kwds = set()
+        signature = inspect.signature(f)
+        for param in signature.parameters.values():
+            if param.kind == param.VAR_KEYWORD:
+                valid_kwds = None
+                break
+            elif param.kind == param.POSITIONAL_ONLY:
+                pass
+            valid_kwds.add(param.name)
+        
+        return valid_kwds
 
 __all__ = []
